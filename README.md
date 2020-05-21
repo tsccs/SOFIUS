@@ -8,3 +8,5 @@ The user running this program must have the proper permissions to retrieve the '
 This can be tested by opening a Windows Command Prompt and typing the following:
   openfiles /query /s [SERVERNAME] /fo csv
   If you receive results, then this program should work for you.
+
+You only need the main HTA file. If you are on a 64-bit OS, the HTA will create a batch file which will run the HTA in the proper 64-bit environment. The INI file will be created, and open for configuration.
