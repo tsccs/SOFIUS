@@ -1,0 +1,1478 @@
+<html>
+<head>
+<title>Server Open File In-Use Search</title>
+<HTA:APPLICATION
+  APPLICATIONNAME="Server Open File In-Use Search"
+  ID="SearchTool"
+  VERSION="0.3.5 alpha"
+  BORDER="dialog"
+  MAXIMIZEBUTTON="yes"
+  MINIMIZEBUTTON="yes"
+  SCROLL="yes"
+  SINGLEINSTANCE="yes"
+  CONTEXTMENU="yes"
+  SELECTION="no"
+  ICON="#"/>
+</head>
+
+<script language="VBScript">
+'https://www.jb51.net/shouce/dhtml/objects/hta.html
+'Program compiled from bits of code from several sources, and a lot of my own code to tie it all together.
+'History Log
+'0.1 = Basic static code.
+'0.2 = Start Conversion to Dynamic
+'0.21 = Redo IDs and Names
+'0.22 = CheckAll Consolidation and Dynamic
+'0.23 = Convert all "If checkmarked checks" to a single for loop.
+'0.24 = Old Code Cleanup. Impliment Server list import Code.
+'0.25 = Convert CheckMark code to dynamic, passed in by INI file read.
+'0.26 = Old Code Cleanup - Code Functional. Allow enable window scroll if too big.
+'0.27 = Make entire window dynamically larger.
+'		https://stackoverflow.com/questions/33752695/dynamically-updating-a-table-row-in-hta-vbs
+'0.28 = Adjust code to allow as many servers as you want.
+'0.29 = x64 check. Bat File Create. Fix Window Sizing and Top Box Spacing when using small data set.
+'0.30 = New Name=Server Open File In-Use Search (SOFIUS). App icon created with xiconeditor.com
+'0.30 = New INI section, [Remove]. Common text to remove from results. Build public Array. Change FindReplace() to [for each] loop.
+'0.30 = Added File Menu at the top. Need to try and fix allignment.
+'0.31 = Fix Favorites, if blank, don't show. If group is blank, don't show. Impliment EditINI and ReReadINI.
+'		Add TabIndex to align [Tab] use to each column of servers. Add lots program comments. Added Keyboard shortcut keys.
+'0.32 = Add more comments. Added Ctrl and Alt Keyboard Shortcut Keys.
+'		Added SkipGroup Function to INI proccessor. [-GroupName].
+'		Better Group Header Name Proccessing. Allow # comments in-line in INI file.
+'		Add option to sort output data. Will need to sort each section and combine into final output file.
+'			Sort by path will require Split() to sort by second column. Code will always sort by path.
+'		Add INI options to sort by name. [Settings] SortByName=0/1
+'0.33 = Add AccountUsername to INI. If username exists, show password input box below [Search] button, and increase windows size by one.
+'0.33 = Program now working when run from a UNC path. It will localize to the current folder, no matter where, and create/load the INI and LogFileViewer from there.
+'0.33 = Added (Function ShowWindow) from https://gist.github.com/codeartery/0ea3a74e92d39ce520cffb05a8b99446
+'		Better detecting and activating of 'Servers.ini" file, even if in a minimized state, verses .AppActivate.
+'0.34 = Changed HTA Setting in 'Log File Viewer' to allow text selection and copy functionality.
+'0.34 = Fix bug where Re-Read INI adds one line of size to the program window size. Re-Read-INI Sub, Reset addlRows = 0.
+
+'0.xx = Search for '.' on ReadyNAS can result in "INFO: No shared open files found." which causes "Subscript Out of Range" error. Need to fix. (Idea: Look for comma. If none found, skip that line.)
+'0.xx = Need to Close Popup Menus (File, Edit, Help...) when clicking somewhere else in the app.
+
+'0.xx = TODO, Add INI options for 'RemoveColumns'
+'		'RemoveColumns', might need to be in each group, depending on the results from OpenFiles on a particular server.
+'				Will likely need to program into current BubbleSort. May also need it's own BubbleSort to sort removed multiple columns from high to low.
+'				Expected columns to remove, 1 and 3. Must remove 3 first, otherwise removing column 1 will make column 3 move to column 2.
+'				Maybe do an "if column exists in Array(RemoveColumns) then don't output to final results file."
+'0.xx = TODO, Add error catch each time the server search is run.
+'0.xx = TODO, Add timeout for when a server search is taking too long. (objShell.Run)
+'0.xx = TODO, Add INI option to keep the output results. Must always delete that file, if it exists, before a new [Search] run. Note: Others could use this to look for other in-use files. May not be necessary.
+'0.xx = TODO, Implement Error Handling, especially at file open levels (for access denied permission issues) and INI import issues.
+'0.xx = TODO, Test/Change OPENFILES to use VBS Internal Server File In-Use Lookup. Test Speed. Can't get it working yet. Memory Overflow.
+
+'Main Window format aquired from this site. Thank you 'WatskeBart' and 'Ekkehard.Horner' for the initial inspiration for this entire project.
+'https://stackoverflow.com/questions/44217876/hta-show-msgbox-when-all-boxes-are-unchecked
+option explicit
+Const ForReading = 1
+Const ForWriting = 2
+Const ForAppending = 8
+Const MAXColumnsAllowed = 6
+Const MINColumnsAllowed = 2
+Const AbsMAXColumnsAllowed = 26
+Const MAXRowsAllowed = 14
+Const MAXFavSearch = 10
+Const MAXRemoveTextCount = 20
+Const ProgramShortName="SOFIUS"
+Const ProgramAuthor="Travis Smith"
+Const ProgramCompany="TSCCS"
+Const ProgramWebSite="http://tsccs.com"
+Const ProgramWebSite2="http://www.tsccs.com/projects.php?project=SOFIUS"
+Const ProgramInfo1=""
+Const ProgramInfo2="Donations accepted at http://tsccs.com/services.php"
+Const lastModifyDate="2019-04-19"
+Dim TempFile, TempFile2										'Contains the 'OpenFiles' Output data.
+Dim shCmd1, shCmd2, shCmdUP									'Used to create the 'OpenFiles' command line string.
+
+
+'PathToRemove = Optional: Common Path Text to remove from the Search Output Results.
+'Dim RemovePathInOutput : RemovePathInOutput = """Windows"",""C:\cloudfs\panzuraa1"		'Converted to INI input array.
+'Dim basePath : basePath = mid(FSO.getparentfolderName(oMyApp.commandline),2)
+Dim LastChildMenu : Set LastChildMenu=Nothing				'Used for File Menu Management
+Dim LastMenu : Set LastMenu=Nothing							'Used for File Menu Management
+Dim booModifyIniBoxShown : booModifyIniBoxShown = false		'Show the Edit INI Message Info Box only once per session.
+Dim SortByPath : SortByPath = True							'Option to sort by Path, ON by default, unless disabled in INI.
+Dim SortByName : SortByName = False							'Option to sort by name, after sorting by path.
+Dim foundAnything : foundAnything = False					'Set to True once one result is detected. If nothing detected, show message about credentials or access at the end of the log.
+Dim strFolderPath											'Detected Folder Path that this program is running in.
+Dim INIFileShortName : INIFileShortName = "Servers.ini"		'INI File in the same folder as HTA file.
+Dim INIFile : INIFile = INIFileShortName					'INI File in the same folder as HTA file.
+Dim logViewerFile : logViewerFile = "LogViewer.hta"			'LogViewer File in the same folder as HTA file.
+Dim batFileName												'Name of the BAT file for 64-bit loading.
+Dim AccountUserName : AccountUserName = ""					'User name, if supplied in INI file.
+Dim AccountPassword : AccountPassword  = ""					'If a username is supplied, prompt for password.
+'Array with Column Letters. Thus, AbsMAXColumnsAllowed = 26.
+Dim MasterColIdList : MasterColIdList = "0 A B C D E F G H I J K L M N O P Q R S T U V W X Y Z"
+Dim columnName : columnName=Split(MasterColIdList)
+Dim boo64BitWarning : boo64BitWarning = False
+Dim booQuitApp : booQuitApp = False
+Dim totalColumns : totalColumns = 0
+Dim totalRows : totalRows = 0
+Dim addlRows : addlRows = 0			'If Favorite Searchs Dropbox is visable, this will add one row to the program window size.
+'Array containing text to remove from the final output file.
+Dim arrRemoveText()
+ReDim arrRemoveText(MAXRemoveTextCount+1)
+arrRemoveText(0) = "0"		'Changes to "1" if remove text elements exist.
+Dim tabIndexTracker()		'Used to track the TabIndex values of the checkboxes and [CheckAll] buttons.
+ReDim tabIndexTracker(AbsMAXColumnsAllowed+1)
+
+Dim objShell, objFSO
+
+Set objShell = CreateObject("Wscript.Shell")
+set objFSO = createobject("Scripting.FileSystemObject")
+
+Sub TestCodeCommentContainer()
+'https://social.technet.microsoft.com/Forums/en-US/ee2a1754-7761-4c98-a5d0-2cb917d8b115/prepopulate-hta-text-box-field?forum=ITCG
+'https://stackoverflow.com/questions/3789844/how-to-make-a-greyed-out-html-form
+'	TxtA1.value = "TesterW1"
+
+'Visibility Options: visible, hidden, collapse
+'	BoxB2.style.visibility="visible"
+
+'how to hide/show a table
+'https://www.tek-tips.com/viewthread.cfm?qid=1120934
+'https://stackoverflow.com/questions/1144123/how-can-i-hide-an-html-table-row-tr-so-that-it-takes-up-no-space
+'Display Options: "none" or "block" or "inline"  ("block" and "inline" seem to work the same.)
+'	FavSearch.style.display="none"
+'''''''Good Testing
+'	Row1.style.display="block"
+'
+''Update the Header for each column
+'	Header1.innerhtml = "Testing"
+
+End Sub
+
+Sub Window_OnLoad
+	'Initial Window Size, bfore reading the INI, is 2 columns wide by 8 rows high.
+	WindowSizeLoc 2,8
+
+	'Get the current folder pato of the program and the accompanying files.
+	CurrentFolderPath()
+	
+	'Check if this program is running on a 64-bit OS, but in 32-bit HTA mode. "Openfiles.exe" won't work under those conditions.
+	Check64Bit()
+	
+	'Allows program to quit, before the INI is built, if prompts are seletected to exit program.
+	If NOT booQuitApp Then ReadINIFile()
+
+End Sub
+
+Sub WindowSizeLoc(dataColumns, dataRows)
+	'This sets the window dimensions, typically after all import data is totaled.
+	Dim Width,Height
+	'Minimum size of 2 columns, no greater than 6 columns.
+	If dataColumns < MAXColumnsAllowed Then
+		If dataColumns < MINColumnsAllowed Then
+			Width = MINColumnsAllowed
+		Else
+			Width = dataColumns
+		End If
+	Else
+		Width = MAXColumnsAllowed
+	End If
+	'No greater that 14 rows of data.
+	If dataRows < MAXRowsAllowed Then
+		Height = dataRows
+	Else
+		Height = MAXRowsAllowed
+	End If
+	'width=<# of columns>*164
+	Width=Width*164
+	'height=(Data Rows+8+FavRow)*32
+	Height=(Height+8+addlRows)*32
+	self.ResizeTo Width,Height
+	'Center to the screen.
+	self.MoveTo (screen.AvailWidth-Width)/2,(screen.AvailHeight-Height)/2
+End Sub
+
+'https://stackoverflow.com/questions/34220388/get-value-from-selection-in-dropdown-menu-with-variable-name
+'https://social.technet.microsoft.com/Forums/en-US/848feada-d9ee-4c04-869c-7fa62cb025b6/drop-down-selection-box-in-hta?forum=ITCG
+'Updates the Search Text box with the item selected in the DropDown box.
+Sub UpdateSearchBox()
+	Dim objOption
+	For Each objOption in DropFavSearch.Options
+		If objOption.Selected Then
+			searchTextBox1.value = objOption.InnerText
+			Exit For
+		End If
+	Next
+End Sub
+
+'Read the INI file into the program, and sort it in order of appearance in the INI file.
+Sub ReadINIFile()
+	Dim settingsActive : settingsActive = False	'True when processing the Settings group.
+	Dim searchActive : searchActive = False		'True when processing the Searches group.
+	Dim searchAddRow : searchAddRow = False
+	Dim removeActive : removeActive = False		'True when processing the Remove group, for text to remove from the final output file.
+	Dim skipGroup : skipGroup = False
+	Dim newRow : newRow = False					'True when a new row needs to be created, and built.
+	Dim colrow									'Contains current Column and Row Entry. e.g. A1, C5, etc.
+	Dim tcol, trow, tbody, i					'Used to build the new rows and columns.
+	Dim strNextLine								'Contains each line of the INI input file.
+	Dim localRows : localRows = 0				'Count Local rows for each new data column. Used to detarmine largest column, and in-turn, the program window size.
+	Dim tooManyServers							'Used if columns exceeds 26 columns.
+	Dim objFile, objTable, Opt
+	Dim tmpHeader
+	Dim ans
+	Dim tabIndexNumber : tabIndexNumber = 4   'First four tabs are used for 'Search' box, 'Favorite' box, [CheckEverything], and [UncheckEverything]
+	
+	If NOT objFSO.FileExists(INIFile) then
+		ans = MsgBox("Server INI File not found: " & INIFile & vbCrLf & "Would you like to create one?",3,"INI File not found.")
+		If ans = vbYes Then CreateINI()
+	End If
+
+	If objFSO.FileExists(INIFile) then
+		Set objFile = objFSO.OpenTextFile(INIFile, ForReading)
+		Set objTable = Document.Getelementbyid("ServerTable")
+		
+		'Create the top 'Headers' Row, if it does not exist.
+		If document.getElementById("Headers") Is Nothing Then
+			Set tbody = document.createElement("tbody")
+			Set trow = document.createElement("tr")
+			trow.ID="Headers"
+			tbody.appendChild(trow)
+			objTable.appendChild(tbody)
+		End If
+
+		'Start processing the INI input file.
+		Do Until objFile.AtEndOfStream
+			strNextLine = objFile.Readline
+
+			Select Case Left(strNextLine,1)		'Check first Charecter of each line. [ = New Header, #:; = comment, empty = skip, other = assume server name for current header.
+				Case "["
+					localRows = 0				'Reset row count for the new group.
+					'If any of the following toggles are True, reset to False before processing new group.
+					If skipGroup Then skipGroup = False
+					If searchActive Then searchActive = False		
+					If removeActive Then removeActive = False		
+					If settingsActive Then settingsActive = False	
+					
+					If InStr(Mid(strNextLine,2,1),"-") Then			'If The first character inside the bracket is "-", then skip group.
+						skipGroup = True
+					ElseIf InStr(strNextLine,"[Settings]") Then		'Enable Search Group Boolean.
+						settingsActive = True
+					ElseIf InStr(strNextLine,"[Searches]") Then		'Enable Search Boolean.
+						searchActive = True
+					ElseIf InStr(strNextLine,"[Remove]") Then		'Enable Remove Group Boolean.
+						removeActive = True
+					Else										'Create a new column for this group.
+						totalColumns = totalColumns + 1
+						If InStr(strNextLine,"]") Then 			'If ']' exists, Grab text between bracket. If no
+							tmpHeader=Mid(strNextLine,2,InStr(strNextLine,"]")-2)		'Grab the text inside the [] brackets.
+						Else
+							tmpHeader=Right(strNextLine,Len(strNextLine)-1)				'Grab the text after '['.
+						End If
+						If totalColumns <= AbsMAXColumnsAllowed Then		'Don't allow more than 26 columns. (A-Z)
+							If searchActive Then searchActive = False
+							If removeActive Then removeActive = False
+							
+							'Add New Header Column to 'Header' Row.
+							Set tcol = document.createElement("th")
+							tcol.className="tg-header"
+							tcol.ID="Header" & totalColumns
+							tcol.title=tmpHeader
+							tcol.innerHTML = Left(tmpHeader,9)
+							Headers.appendChild(tcol)
+
+							'Display the [CheckEverything] and [UnCheckEverything] buttons, to the right of the Search and Favorite boxes, when there is enough room.
+							If totalColumns >=3 Then 
+'								document.getElementById("CheckEverything").style.visibility="visible"
+'								document.getElementById("UnCheckEverything").style.visibility="visible"
+								document.getElementById("CheckEverything").style.display="inline"
+								document.getElementById("UnCheckEverything").style.display="inline"		'[UnCheckEverything] is still not displayed if no Favorite Searches are imported from the INI file.
+							End If
+						Else
+							'Build a message box for when too many columns exist. Rows are not limited.
+							If tooManyServers = "" Then tooManyServers = SearchTool.ApplicationName & " Notice:" & vbCrLf & vbCrLf
+							tooManyServers = tooManyServers & "Max Columns/Groups (" & AbsMAXColumnsAllowed & ") exceeded for: " & tmpHeader & vbCrLf
+						End If
+					End If
+				Case "#"
+					'# = Comment. Skip line.
+				Case ":"
+					'Colon. Skip line.
+				Case ";"
+					'Semicolon. Skip line.
+				Case ""
+					'Blank Line. Skip line.
+				Case Else
+					If Not skipGroup Then		'Skip Proccessing Group if skipGroup is True.
+						'Process all other lines containing text.
+						localRows = localRows + 1					'Count rows for the current group.
+						strNextLine = Replace(strNextLine, Chr(34), "")			'Remove all quotes. Not positive I need this.
+						strNextLine = Trim(strNextLine)				'Remove Extra Spaces before or after the text.
+						If InStr(strNextLine,"#") Then strNextLine = Trim(Left(strNextLine,InStr(strNextLine,"#")-1))	'Remove Text after '#' then remove extra spaces.
+
+						'Add favorite [Searches] to the 'Favorite:' DropDown box.
+						If searchActive Then
+							If localRows <= MAXFavSearch Then
+								If NOT searchAddRow Then 						'When the first data entry is detected for Searches, Show the Favorite Search box and makes the program window one row taller.
+									addlRows = addlRows + 1
+									SearchBox.style.display="inline"			'Show the Favorite Search Drop Down Box.
+									searchAddRow = True
+								End If
+								'hta vbs populate drop down menu with files in folder
+								'https://stackoverflow.com/questions/51563236/hta-vbs-populate-drop-down-menu-with-files-in-folder
+								set Opt = document.createElement("Option")		'Create new list of favorite searches to populate dropbox.
+								Opt.value = localRows
+								Opt.text = strNextLine
+								DropFavSearch.Add Opt		'Add FavSearch items to the FavSearch DropDownBox.
+							End If
+						'Add text items to remove from the final output display file.
+						ElseIf removeActive Then
+							If localRows <= MAXRemoveTextCount Then
+								If arrRemoveText(0) = "0" Then arrRemoveText(0) = "1"
+								arrRemoveText(localRows) = strNextLine
+							Else
+								If lineCount > searchTotalRows * 0.9 Then
+									MAXRemoveTextCount = MAXRemoveTextCount * 1.5
+									ReDim Preserve arrRemoveText(MAXRemoveTextCount)
+								End If							
+							End If
+						'Program Settings from INI File.
+						ElseIf settingsActive Then
+							SettingCheck(strNextLine)		'Call the Sub SettingCheck(). Easier to Break out and manage in Case for future expansion.
+
+						'Add a new rows for each server checkbox and name.
+						Else
+	'						If localRows <= MAXRowsAllowed Then		'Don't allow more than 14 items per column. (14+8)*32=704, which is max size for 1024x768 resolution. (Don't need since enabled Scrolling when above 14 rows.)
+								colrow = columnName(totalColumns) & localRows				'ID for current Column and Row Entry.
+	
+								'If Row does not exist, then create a new Row, Otherwise, connect to existing Row.
+								If document.getElementById("Row" & localRows) Is Nothing Then
+									newRow = True
+									Set tbody = document.createElement("tbody")
+									Set trow = document.createElement("tr")
+									trow.ID="Row" & localRows
+	'								trow.style.display="block"
+	'								objTable.appendChild(trow)
+								Else
+									Set trow = document.getElementById("Row" & localRows)
+								End If
+								
+								'Add a blank Column entries that wern't created prior to the current column.
+								'e.g. A=10 servers, B=5 servers, C=9 servers, this creates blank B6-B10 column entries, so that new column C entries will line up properly.
+								For i = 1 to totalColumns-1
+									If document.getElementById("Cell" & columnName(i) & localRows) Is Nothing Then
+										Set tcol = document.createElement("td")
+										tcol.ID="Cell" & columnName(i) & localRows
+										trow.appendChild(tcol)
+									End If
+								Next
+								
+								'Create the new server column HTML element, and insert it into the table.
+								Set tcol = document.createElement("td")
+								tcol.ID="Cell" & colrow
+								tabIndexNumber = tabIndexNumber + 1		'Increment tabIndexNumber. Used to keep tabs in line with each column.
+								tcol.innerHTML = "<label><input type=""checkbox"" name=""Box" & colrow & """ id=""Box" & colrow & """ tabindex="""& tabIndexNumber & """>" & _
+												 "<input type=text name=""Txt" & colrow & """ id=""Txt" & colrow & """ value=""" & strNextLine & _
+												 """ size=15 tabindex=""-1"" readonly></label>"
+	
+								trow.appendChild(tcol)			'Insert the new column into the current row.
+								
+								'If the row is new, insert it into the table.
+								If newRow Then
+									tbody.appendChild(trow)
+									objTable.appendChild(tbody)
+									newRow = False
+								End If
+	
+								'Local Rows for each Column. Used for the CheckMark tabindex id's.
+								tabIndexTracker(totalColumns) = tabIndexNumber
+								tabIndexNumber = tabIndexNumber + 2							'Skip 2, to save room for the [CheckAll] and [UncheckAll] buttons later.
+								If localRows > totalRows Then totalRows = localRows			'Keep track of the largest column, for adjusting final program window size after INI file import.
+	'						Else
+	'							'Rows are no longer limited.
+	'							If tooManyServers = "" Then tooManyServers = SearchTool.ApplicationName & " Notice:" & vbCrLf & vbCrLf
+	'							tooManyServers = tooManyServers & "Max Rows (" & MAXRowsAllowed & ") exceeded for: " & tmpHeader & ":" & strNextLine & vbCrLf
+	'						End If
+						End If
+					End If				'End of skipGroup
+			End Select
+		Loop
+		objFile.Close
+
+		'Create CheckAll Boxes at the end of each column.
+		Set tbody = document.createElement("tbody")
+		Set trow = document.createElement("tr")
+		trow.ID="rowCheckAll"
+		For i = 1 to totalColumns
+			Set tcol = document.createElement("td")
+			tcol.className="tg-text"
+			tcol.innerHTML = "&nbsp;&nbsp;&nbsp;&nbsp;<input type=""button"" name=""CheckAll" & columnName(i) & """ value=""Check All"" onClick='CheckAll(""" & columnName(i) & """)' tabindex="""& tabIndexTracker(i)+1 &""">"
+			trow.appendChild(tcol)
+		Next
+			tbody.appendChild(trow)		'Add the [CheckAll] row to the table body.
+
+		'Create UncheckAll Boxes at the end of each column.
+		Set trow = document.createElement("tr")
+		trow.ID="rowUnCheckAll"
+		For i = 1 to totalColumns
+			Set tcol = document.createElement("td")
+			tcol.className="tg-text"
+			tcol.innerHTML = "&nbsp;&nbsp;&nbsp;&nbsp;<input type=""button"" name=""UnCheckAll" & columnName(i) & """ value=""Uncheck All"" onClick='UncheckAll(""" & columnName(i) & """)' tabindex="""& tabIndexTracker(i)+2 &""">"
+			trow.appendChild(tcol)
+		Next
+		tbody.appendChild(trow)		'Add the [UncheckAll] row to the table body.
+		objTable.appendChild(tbody)
+'Original HTML Example Code.
+'			<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="CheckAllA" value="Check All" onClick="checkAll("A")"></td>
+'			<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="UnCheckAllA" value="Uncheck All" onClick="uncheckAll("A")"></td>
+	Else
+'		MsgBox "Server INI File Missing: " & INIFile & vbCrLf & vbCrLf & "Please create a " & INIFile & " file and restart program." & vbCrLf & "Quitting Program"
+		MsgBox "Server INI File Missing: " & INIFile & vbCrLf & vbCrLf & "Please create a " & INIFile & " file using (Edit -> Edit INI) and then (File -> ReReadINI), or restart the program."
+'		ExitTool()
+	End If
+
+'msgbox totalColumns & MAXColumnsAllowed&(totalColumns > MAXColumnsAllowed) & totalRows & MAXRowsAllowed & (totalRows > MAXRowsAllowed)
+	'If colums or rows is larger than MAXColumnsAllowed and MAXRowsAllowed, respectivly, then enable windows scroll option.
+	If (totalColumns > MAXColumnsAllowed) OR (totalRows > MAXRowsAllowed) Then document.body.scroll = "yes"
+	WindowSizeLoc totalColumns,totalRows		'Set the program window size.
+	
+	'Throw an notice if more than 26 groups are added from the INI file.
+	If NOT tooManyServers = "" Then MsgBox tooManyServers & vbCrLf & "Those Groups/Servers will not be available/listed on the search window. Please remove them from the INI file, or move them to a new group."
+
+End Sub
+
+Sub SettingCheck(strNewSetting)
+	If InStr(strNewSetting,"=") Then
+		'Get the setting and the value. Ignore text after "#" then remove extra spaces before and after text.
+		If InStr(strNewSetting,"#") Then strNewSetting = Trim(Left(strNewSetting,InStr(strNewSetting,"#")-1))	'Remove Text after '#' then remove extra spaces.
+		Dim strSetting : strSetting = Trim(Left(strNewSetting,InStr(strNewSetting,"=")-1))						'Get the Setting before the '='
+		Dim strValue : strValue = Trim(Right(strNewSetting,Len(strNewSetting)-InStr(strNewSetting,"=")))		'Get the Value after the '='
+		strValue = Replace(strValue, Chr(9), "")
+		Select Case LCase(strSetting)
+			Case "sortbypath"
+				If strValue > "0" Or UCASE(strValue) > "TRUE" Then
+					SortByPath = True
+				Else
+					SortByPath = False
+				End If
+			Case "sortbyname"
+				If strValue > "0" Or UCASE(strValue) > "TRUE" Then
+					SortByName = True
+				Else
+					SortByName = False
+				End If
+			Case "accountusername"
+				AccountUserName = strValue
+				addlRows = addlRows + 1
+				PasswordLine.style.display="inline"
+			Case "accountpassword"
+				'Will not accept from INI file. Must be entered into program popup.
+			Case Else
+				'Maybe compile unrecognized settings and display at the end of processing.
+		End Select
+	End If
+End Sub
+
+Sub CreateINI()
+	Dim strINIdata, objFile
+	Dim strINIOpenCmd : strINIOpenCmd = "Notepad.exe " & INIFile
+	'If Ini file does not exist, offer to create it.
+	If NOT objFSO.FileExists(INIFile) then
+		'MsgBox "Creating Temp File: " & TempFile
+		Set objFile = objFSO.CreateTextFile(INIFile)
+		strINIdata = "[Settings]" & vbCrLf & "#Program Settings Here. (# = Comments, even in-line." & vbCrLf
+		strINIdata = strINIdata & "SortByPath=1		#On by default" & vbCrLf & "SortByName=0" & vbCrLf
+		strINIdata = strINIdata & "#AccountUserName=		#domain\user" & vbCrLf
+		strINIdata = strINIdata & "RemoveColumn=1,3		#Columns to remove from the final output." & vbCrLf & vbCrLf
+		strINIdata = strINIdata & "[Searches]" & vbCrLf & "#Enter Quick Searches/Favorites here" & vbCrLf & vbCrLf
+		strINIdata = strINIdata & "[Remove]" & vbCrLf & "#Enter common items to remove from the final output file here. e.g." & vbCrLf & "#""Windows""," & vbCrLf & "#C:\" & vbCrLf & vbCrLf
+		strINIdata = strINIdata & "[Windows]" & vbCrLf & "#Enter Windows Server Names Here" & vbCrLf & vbCrLf
+		strINIdata = strINIdata & "[-NAS]  'Dash (-) indicates to skip this group, i.e. don't display. Text after ']' is ignored." & vbCrLf & "#Enter NAS Server Names Here" &  vbCrLf & vbCrLf
+		strINIdata = strINIdata & "#Create additional groups using the following structure:" & vbCrLf & "#[GroupName]" & vbCrLf & "#followed by server names in that group."
+		objFile.WriteLine strINIdata
+		objFile.Close
+		MsgBox "Server Ini file Created: " & INIFile & vbCrLf & "Press [OK] to edit the file in Notepad. Save and close the file to continue."
+		objShell.Run strINIOpenCmd, 1, True
+	End If
+End Sub
+
+Sub CreateLogViewer()
+	Dim objFile
+	Dim strLogFileData
+
+	If NOT objFSO.FileExists(logViewerFile) then
+		Set objFile = objFSO.CreateTextFile(logViewerFile)
+		'Contents of the LogViewer.hta file.
+		strLogFileData = "<head>" & vbCrLf & "<title>Log File Viewer</title>" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "<HTA:APPLICATION" & vbCrLf & "  APPLICATIONNAME=""Log File Viewer""" & vbCrLf & "  ID=""objLogViewerHTA""" & vbCrLf
+		strLogFileData = strLogFileData & "  INNERBORDER=""no""" & vbCrLf & "  SYSMENU=""yes""" & vbCrLf & "  MAXIMIZEBUTTON=""no""" & vbCrLf
+		strLogFileData = strLogFileData & "  MINIMIZEBUTTON=""no""" & vbCrLf & "  SCROLL=""no""" & vbCrLf & "  SCROLLFLAT=""yes""" & vbCrLf
+		strLogFileData = strLogFileData & "  SHOWINTASKBAR=""yes""" & vbCrLf & "  CONTEXTMENU=""no""" & vbCrLf & "  SELECTION=""yes""" & vbCrLf
+		strLogFileData = strLogFileData & "  SINGLEINSTANCE=""yes""/>" & vbCrLf & "</head>" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "<script language=""VBScript"">" & vbCrLf
+		strLogFileData = strLogFileData & "'https://stackoverflow.com/questions/40831498/hta-show-text-file-in-a-scrollable-popup-window" & vbCrLf
+		strLogFileData = strLogFileData & "Dim strHTML" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "Sub Window_OnLoad" & vbCrLf & "    Dim width,height" & vbCrLf & "    If screen.AvailWidth <= 800 Then" & vbCrLf & "        width=800" & vbCrLf
+		strLogFileData = strLogFileData & "    Else" & vbCrLf & "        width=1200" & vbCrLf & "    End If" & vbCrLf
+		strLogFileData = strLogFileData & "    height=720" & vbCrLf & "    self.ResizeTo width,height" & vbCrLf & "    self.MoveTo (screen.AvailWidth-width)/2,(screen.AvailHeight-height)/2" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "    arrCommands = Split(objLogViewerHTA.commandline, chr(34))" & vbCrLf
+		strLogFileData = strLogFileData & "    For i = 3 to (Ubound(arrCommands) - 1) Step 2" & vbCrLf & "        logfile = arrCommands(i)" & vbCrLf & "    Next" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "    strHTML = """"" & vbCrLf & "    strHTML = strHTML & ""<div id='list'>""" & vbCrLf
+		strLogFileData = strLogFileData & "    strHTML = strHTML & ""<p><iframe src='"" & logfile & ""' frameborder='0' height='"" & height-120 & ""' width='100%'></iframe></p>""" & vbCrLf
+		strLogFileData = strLogFileData & "    strHTML = strHTML & ""</div>""" & vbCrLf & "    LogViewer.InnerHTML = strHTML" & vbCrLf
+		strLogFileData = strLogFileData & "End Sub" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "Sub Document_OnKeyUp()" & vbCrLf & "	intKeyCode = Window.Event.Keycode" & vbCrLf & "	If intKeyCode = 27 Then ClosePopup" & vbCrLf & "End Sub" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "Sub ClosePopup" & vbCrLf & "    window.close" & vbCrLf & "End Sub" & vbCrLf
+		strLogFileData = strLogFileData & "<" & Chr(47) & "script>" & vbCrLf & vbCrLf
+		strLogFileData = strLogFileData & "<body>" & vbCrLf & "<div id=""LogViewer""></div>" & vbCrLf
+		strLogFileData = strLogFileData & "<center><input type=""button"" id=""Close"" value=""Close Log Viewer"" onclick=""VBScript:ClosePopup""></center>" & vbCrLf
+		strLogFileData = strLogFileData & "<" & Chr(47) & "body>" & vbCrLf & "<" & Chr(47) & "html>"
+
+		objFile.WriteLine strLogFileData
+		objFile.Close
+	End If
+End Sub
+
+'Conceptial Assist: https://stackoverflow.com/questions/16138831/getting-current-directory-in-vbscript
+'Conceptial Assist: https://gallery.technet.microsoft.com/scriptcenter/094f0cc1-215b-4bf7-a60f-bfcb8aca11cd
+'Get the current folder pato of the program and the accompanying files.
+Sub CurrentFolderPath()
+	Dim strCurPathInfo										'For Building a MsgBox string of the Path Results.
+'	Dim strFullPath, strFolderPath, strProgramFileName		'Holds the detected paths.
+	Dim strFullPath, strProgramFileName		'Holds the detected paths.
+	Dim strReplaceIntro : strReplaceIntro = ""				'Used to replace Drive path (file://), unless UNC path detected, which will replace with "//".
+	
+	'Get the full path and file name of the currently running HTA program. Unescape() converts '%xx' to the ASCII character.
+	strFullPath = Unescape(window.document.location)
+
+	'Remove "file://". If there is still a ":" then the path is a drive letter, If not, then it's a UNC path.
+	If InStr(Replace(strFullPath,"file:",""),":") < 1 Then strReplaceIntro = "//"
+
+	'Detect if patch starts with 'file:///' or 'file://'. Remove it, and change all forwardslashes to backslashes.
+	If InStr(strFullPath, "file:///") Then
+		strFullPath = Replace( Replace(strFullPath, "file:///", strReplaceIntro) ,"/", "\")
+	ElseIf InStr(strFullPath, "file://") Then
+		strFullPath = Replace( Replace(strFullPath, "file://", strReplaceIntro) ,"/", "\")
+	Else
+		'If "file://" doesn't exist just replace '/' with '\'. This shouldn't ever happen, but it's here just in case for testing.
+		strFullPath = Replace(strFullPath, "/", "\")
+	End If
+	
+	strFolderPath = Left(strFullPath, InstrRev(strFullPath , "\") - 1)							'The folder path, without the file name.
+	strProgramFileName = Right(strFullPath, Len(strFullPath) - InstrRev(strFullPath , "\"))			'The file name, without the folder path.
+	batFileName = Replace(strProgramFileName, ".hta", ".bat")										'Get program file name and replace 'HTA' with 'BAT'.
+
+	'For testing/viewing the constructed paths in a MsgBox.
+	strCurPathInfo = strCurPathInfo & "strFullPath: " & strFullPath & vbCrLf & vbCrLf
+	strCurPathInfo = strCurPathInfo & "strFolderPath: " & strFolderPath & vbCrLf & vbCrLf
+	strCurPathInfo = strCurPathInfo & "strProgramFileName: " & strProgramFileName & vbCrLf & vbCrLf & vbCrLf
+
+	'If the currently running script name is not detected in the current folder,  (which should work for local and network drive letter paths)
+	'   but is detected in the full path (most likely a UNC path)
+	'   then add the full path to all 'File' name variables.
+	If Not objFSO.FileExists(strProgramFileName) Then
+		If objFSO.FileExists(strFolderPath & strProgramFileName) Then
+			INIFile = strFolderPath & INIFile
+			logViewerFile = strFolderPath & logViewerFile
+			batFileName = strFolderPath & batFileName
+		End If
+	End If
+
+	'For testing/viewing the constructed paths in a MsgBox.
+	strCurPathInfo = strCurPathInfo & "INIFile: " & INIFile & vbCrLf & vbCrLf
+	strCurPathInfo = strCurPathInfo & "logViewerFile: " & logViewerFile & vbCrLf & vbCrLf
+	strCurPathInfo = strCurPathInfo & "batFileName: " & batFileName & vbCrLf & vbCrLf & vbCrLf
+
+	'Test/View all final paths.
+'	MsgBox strCurPathInfo
+End Sub
+
+'https://stackoverflow.com/questions/16138831/getting-current-directory-in-vbscript
+Sub CurrentFolderPathOLDBADDONTUSE()
+	'Global DIM
+	'Dim INIFile : INIFile = "Servers.ini"						'INI File in the same folder as HTA file.
+	'Dim logViewerFile : logViewerFile = "LogViewer.hta"			'LogViewer File in the same folder as HTA file.
+	'Dim batFileName												'Name of the BAT file for 64-bit loading.
+
+	Dim strCurPathInfo, g_sScriptFullPath, g_sScriptPath, g_sScriptFolder, g_sScriptName, sScriptDir, objThisFolder
+	Dim Path, sTmp, UNCPath, Path2, sTmp2, UNCPath2
+	Dim strFullPath, strFolderPath, strProgramName
+	Dim strReplaceIntro : strReplaceIntro = ""
+	Dim Server, WScript
+'	g_sScriptPathFull = replace(window.document.location,"%20"," ")
+	g_sScriptFullPath = Unescape(window.document.location)
+	g_sScriptPath = replace(window.document.location.pathname,"%20"," ")
+	g_sScriptFolder = objFSO.GetAbsolutePathName(".\")
+	g_sScriptName = Right(g_sScriptPath, Len(g_sScriptPath) - (Len(g_sScriptFolder)+1))
+'	batFileName = g_sScriptName
+	batFileName = Replace(g_sScriptName, ".hta", ".bat")
+	'Trying to figure out how to get UNC Path, just in case.
+'	Dim sScriptDir : sScriptDir = objFSO.GetParentFolderName(ScriptFullName)
+''	Dim sScriptDir : sScriptDir = CreateObject("WScript.Shell").ScriptFullName
+'	Set objThisFolder = objFSO.GetFolder(Left(WScript.ScriptFullName,(Len(WScript.ScriptFullName) - (Len(WScript.ScriptName) + 1))))
+'	Set objThisFolder = objFSO.GetFolder(Left(ScriptFullName,(Len(ScriptFullName) - (Len(ScriptName) + 1))))
+'	Set objThisFolder = objFSO.GetFolder(Left(WScript.ScriptFullName,(Len(WScript.ScriptFullName) - (Len(WScript.ScriptName) + 1))))
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''
+strCurPathInfo =	"g_sScriptFullPath: " & g_sScriptFullPath & vbCrLf &_
+					"g_sScriptPath: " & g_sScriptPath & vbCrLf &_
+					"g_sScriptFolder: " & g_sScriptFolder & vbCrLf &_
+					"g_sScriptName: " & g_sScriptName & vbCrLf &_
+					"batFileName: " & batFileName & vbCrLf &_
+					"sScriptDir: " & sScriptDir & vbCrLf &_
+					"objThisFolder: " & objThisFolder & vbCrLf
+
+		If IsObject(Server) Then
+			'Classic ASP
+			Path = Server.MapPath("../")
+		ElseIf IsObject(WScript) Then 
+			'Windows Scripting Host
+			Path = Left(WScript.ScriptFullName, InStr(WScript.ScriptFullName, WScript.ScriptName) - 2)
+		ElseIf IsObject(window) Then
+			'Internet Explorer HTML Application (HTA)
+			sTmp = Replace( Replace(Unescape(window.location), "file:///", "") ,"/", "\")
+			Path = Left(sTmp, InstrRev( sTmp , "\") - 1)
+'			sTmp2 = Replace( Replace(Unescape(window.location), "file:///", "") ,"/", "\")
+'			Path2 = Left(sTmp, InstrRev( sTmp , "\") - 1)
+		End If
+
+UNCPath = Replace(Path, "file:\\","\\")
+'UNCPath2 = Path2
+
+strCurPathInfo = strCurPathInfo & "Path: " &  Path & vbCrLf
+strCurPathInfo = strCurPathInfo & "UNCPath: " &  UNCPath & vbCrLf & vbCrLf
+'strCurPathInfo = strCurPathInfo & "UNCPath2: " &  UNCPath2 & vbCrLf
+
+'	strFullPath, strFolderPath, strProgramName
+	strFullPath = Unescape(window.document.location)
+
+	'Remove "file://". If there is still a ":" then the path is a drive letter, If not, then it's a UNC path.
+	If InStr(Replace(strFullPath,"file:",""),":") < 1 Then strReplaceIntro = "//"
+
+	If InStr(strFullPath, "file:///") Then
+		strFullPath = Replace( Replace(strFullPath, "file:///", strReplaceIntro) ,"/", "\")
+	ElseIf InStr(strFullPath, "file://") Then
+		strFullPath = Replace( Replace(strFullPath, "file://", strReplaceIntro) ,"/", "\")
+	End If
+		
+	strFolderPath = Left(strFullPath, InstrRev(strFullPath , "\") - 1)
+	strProgramName = Right(strFullPath, Len(strFullPath) - InstrRev(strFullPath , "\"))
+
+strCurPathInfo = ""
+strCurPathInfo = strCurPathInfo & "strFullPath: " & strFullPath & vbCrLf
+strCurPathInfo = strCurPathInfo & "strFolderPath: " & strFolderPath & vbCrLf
+strCurPathInfo = strCurPathInfo & "strProgramName: " & strProgramName & vbCrLf
+
+If objFSO.FileExists(strFolderPath & strProgramName) Then MsgBox "Program Found"
+
+'If objFSO.FileExists(UNCPath & INIFile) Then MsgBox "INIFile Found"
+
+MsgBox strCurPathInfo
+End Sub
+
+'Check if this program is running on a 64-bit OS, but in 32-bit HTA mode. "Openfiles.exe" won't work under those conditions.
+Sub Check64Bit()
+	Dim strTitleMsg, strNoticeMsg, strStartMsg, strExitMsg, ans
+	Dim objFile
+
+	If NOT CreateObject("WScript.Shell").Environment("PROCESS")("ProgramW6432") = "" Then			'will return true for a 32-bit OS and false for a 64-bit OS. NOT reverses that.
+		If CreateObject("WScript.Shell").Environment("Process").Item("Processor_Architecture") = "x86" Then			' "AMD64" if launched via System32, "x86" if launched via SysWOW64
+			boo64BitWarning = True
+			strTitleMsg = "Warning: 64-Bit OS running in 32-Bit Mode"
+			strNoticeMsg = "Script is running on a 64-bit OS but in a 32-bit environment." & vbCrLf & "This script may not work unless it's run with the batch file that runs HTA in 64-bit." & vbCrLf & vbCrLf 
+			strStartMsg = "Start this program by running:" & vbCrLf & "<" & batFileName & ">" & vbCrLf & vbCrLf
+			strExitMsg = "Would you like to exit the current program now?"
+			If objFSO.FileExists(batFileName) then
+'				MsgBox strNoticeMsg & "Start this program by running: " & batFileName
+				ans = MsgBox(strNoticeMsg & strStartMsg & strExitMsg, 4, strTitleMsg)
+				If ans = vbYes Then ExitTool()
+			Else
+				ans = MsgBox(strNoticeMsg & " Would you like to create that Batch file now? <" & batFileName & ">" , 4, strTitleMsg & " - Batch File not found.")
+				If ans = vbYes Then 
+					Set objFile = objFSO.CreateTextFile(batFileName)
+					'Contents of the Batch file.
+					Dim strBATdata
+					strBATdata = "SET curPath=%~dp0" & vbCrLf & "SET curFile=%~n0" & vbCrLf
+					strBATdata = strBATdata & "start """" ""%windir%\System32\mshta.exe"" ""%curPath%\%curFile%.hta""" & vbCrLf
+					objFile.WriteLine strBATdata
+					objFile.Close
+					ans = MsgBox("Batch File Created." & vbCrLf & vbCrLf & strStartMsg & strExitMsg, 4, strTitleMsg & " - New Batch File Created")
+					If ans = vbYes Then ExitTool()
+				Else
+					
+				End If
+			End If
+		End If
+	End If
+End Sub
+
+'(Un)Check All Boxes Code. True = Checkmark, False = Uncheck. Might consolidate all '...Check...' subs later.
+Sub CheckEverything(tfSwitch)
+	Dim c1, rw
+	For c1 = 0 to totalColumns
+		For rw = 1 to totalRows
+			Dim n : n = rw
+			Dim rwID : rwID = "Box"&columnName(c1)&n
+			If NOT document.getElementById(rwID) Is Nothing Then document.getElementById(rwID).checked=tfSwitch
+		Next
+	Next
+End Sub
+
+'Check all boxes in one column.
+Sub CheckAll(checkColumn)
+	Dim c1, rw
+	For c1 = 0 to totalColumns
+		If columnName(c1) = checkColumn Then
+			For rw = 1 to totalRows
+				Dim n : n = rw
+				Dim rwID : rwID = "Box"&columnName(c1)&n
+				If NOT document.getElementById(rwID) Is Nothing Then document.getElementById(rwID).checked=True
+			Next
+		End If
+	Next
+End Sub
+
+'UnCheck all boxes in one column.
+Sub UncheckAll(checkColumn)
+	Dim c1, rw
+	For c1 = 0 to totalColumns
+		If columnName(c1) = checkColumn Then
+			For rw = 1 to totalRows
+				Dim n : n = rw
+				Dim rwID : rwID = "Box"&columnName(c1)&n
+				If NOT document.getElementById(rwID) Is Nothing Then document.getElementById(rwID).checked=False
+			Next
+		End If
+	Next
+End Sub
+
+'Never got around to using. Will likely delete this later.
+Function DblQuote(Str)
+	DblQuote = Chr(34) & Str & Chr(34)
+End Function
+
+
+'https://stackoverflow.com/questions/268648/how-do-i-sort-arrays-using-vbscript
+'Bubble Sort results data from TempFile2 and output to main TempFile.
+Sub BubbleSort1()
+	Dim a, j, i, z
+	Dim objFile
+	Dim strNextLine, contents
+	Dim lineCount : lineCount = 0
+	Dim posName : posName = 2							'Column position of the Name field. Might need to make these an INI option later, depending on output from different types of servers.
+	Dim posPath : posPath = 4							'Column Position of the Path field.
+	Dim posSortBy : posSortBy = posPath - 1				'SortByPath position first.
+	Dim searchTotalColumns : searchTotalColumns = 4		'Expect max of 4 columns.
+	Dim searchTotalRows : searchTotalRows = 500
+	Dim tempArrayOfTerms
+'	ReDim tempArrayOfTerms(searchTotalColumns)
+	Dim ArrayOfTerms()
+	ReDim ArrayOfTerms(searchTotalColumns-1,searchTotalRows)
+	
+	'There should be four columns the OpenFile Output Data.
+	Set objFile = objFSO.OpenTextFile(TempFile2, ForReading)
+	
+	If objFile.AtEndOfStream Then
+		' The file is empty. Make a note in the output TempFile.
+		contents = "No results for this server." & vbCrLf
+		'Exit Sub
+	End If
+	
+	'If any lines are detected at this point, then it means it detected at least one open-file result.
+	If (NOT objFile.AtEndOfStream) AND (NOT foundAnything) Then foundAnything = True
+	
+	Do Until objFile.AtEndOfStream
+		strNextLine = objFile.Readline
+		tempArrayOfTerms = Split(strNextLine,",",searchTotalColumns,1)			'Split the string line into tempArray
+		For i = 0 to searchTotalColumns - 1 
+			ArrayOfTerms(i,lineCount) = tempArrayOfTerms(i)						'Copy Split data into main Array.
+		Next
+		lineCount = lineCount + 1
+		
+		'If Main Array fills to 90% capacity. Add 20% more rows.
+		If lineCount > searchTotalRows * 0.9 Then
+			searchTotalRows = searchTotalRows * 1.2
+			ReDim Preserve ArrayOfTerms(searchTotalColumns-1,searchTotalRows)
+		End If
+	Loop
+	lineCount = lineCount - 1
+
+	objFile.Close
+
+	'Bubble Sort the contents
+'	for a = UBound(ArrayOfTerms) - 1 To 0 Step -1
+	For z = 1 to 2
+		'During the second run, if SortByName is true, then run sort again and sort by name, else, exit the for loop.
+		If z = 2 and SortByName Then
+			If NOT posSortBy = posName - 1 Then posSortBy = posName - 1
+		ElseIf z = 2 Then
+			Exit For
+		End If
+		
+		'During the first run, if SortByPath is true, then sort by path.
+		If (z = 1 and SortByPath) OR (z = 2 and SortByName) Then
+			for a = lineCount - 1 To 0 Step -1
+				for j = 0 to a
+					if UCase(ArrayOfTerms(posSortBy,j)) > UCase(ArrayOfTerms(posSortBy,j+1)) then		'Sort is not case sensitive.
+						'Assign current row data to TempArray
+						For i = 0 to searchTotalColumns - 1 
+							tempArrayOfTerms(i)=ArrayOfTerms(i,j+1)
+						Next
+						'Copy data up one row.
+						For i = 0 to searchTotalColumns - 1 
+							ArrayOfTerms(i,j+1)=ArrayOfTerms(i,j)
+						Next
+						'Copy TempArray back to current 
+						For i = 0 to searchTotalColumns - 1 
+							ArrayOfTerms(i,j)=tempArrayOfTerms(i)
+						Next
+		
+					end if
+				next
+			next
+		End If
+	Next
+
+	'Compile sorted results into single 'contents' string.
+	for a = 0 to lineCount
+		strNextLine = ""
+		For i = 0 to searchTotalColumns - 1
+			Dim strEndComma : strEndComma = ","
+			If i = searchTotalColumns - 1 Then strEndComma = ""				'No comma at the end of the last item, per line.
+			strNextLine = strNextLine & ArrayOfTerms(i,a) & strEndComma
+		Next
+		contents = contents & strNextLine & vbCrLf
+	Next
+	
+	'Output sorted results to the end of the TempFile.
+	Set objFile = objFSO.OpenTextFile(TempFile, ForAppending, False)
+	objFile.Write contents
+	objFile.Close
+	
+End Sub
+
+'https://social.technet.microsoft.com/Forums/scriptcenter/en-US/75451bb5-eb2e-4ded-90d6-839167a9cccc/need-vb-script-to-truncate-first-3-characters?forum=ITCG
+'Remove the first column from the text results file. Scans each line. For lines containing a comma, remove everything up to and including that first comma.
+'Good for removing the file lock number at the begining of each line.
+'Later, maybe add option or setting to remove a specific CSV column. If InStr(",") then find column, largest first (simple BubbleSort), and remove, working down. e.g. Remove Column 3 then 1.
+Sub RemoveCSVColumnOne()
+	'Const ForReading = 1
+	'Const ForWriting = 2
+	Dim objFile
+	Dim strNextLine, contents
+
+	Set objFile = objFSO.OpenTextFile(TempFile, ForReading)
+	Do Until objFile.AtEndOfStream
+		strNextLine = objFile.Readline
+		strNextLine =  Right(strNextLine,Len(strNextLine) - InStr(strNextLine,","))		'Delete everything before the first comma. If no comma, delete nothing.
+		contents = contents & strNextLine & vbCrLf
+	Loop
+	objFile.Close
+	
+	'MsgBox "CSV Column Remove: " & vbCrLf & contents
+	set objFile = objFSO.OpenTextFile(TempFile, ForWriting)
+	objFile.Write contents 
+	objFile.Close
+End Sub
+
+'https://stackoverflow.com/questions/60034/how-can-you-find-and-replace-text-in-a-file-using-the-windows-command-line-envir
+'Standard Find/Replace for certain text within the final results output file. Read in from the INI config file.
+Sub FindReplace(strOldText, strNewText)
+	'Const ForReading = 1
+	'Const ForWriting = 2
+	Dim objFile
+	Dim strText, strRemoveText
+
+	Set objFile = objFSO.OpenTextFile(TempFile, ForReading)
+	strText = objFile.ReadAll
+	objFile.Close
+
+	'msgbox "Replace("& strText&", "& strOldText&", "&strNewText&")"
+'		strNewText = Replace(strText, strOldText, strNewText)
+	For Each strRemoveText in strOldText
+		If strRemoveText <> ""  And strRemoveText <> "1" Then 
+			strText = Replace(strText, strRemoveText, strNewText)
+		End If
+	Next
+	Set objFile = objFSO.OpenTextFile(TempFile, ForWriting)
+	objFile.Write strText  'WriteLine adds extra CR/LF
+	objFile.Close
+End Sub
+
+'Add a Header and footer for each server section in the output file.
+Sub HeaderFooter(strServerName, strAddtlText)
+	Dim strHeaderLine : strHeaderLine = "-----------------------------------------------------------------"
+	Dim strSpaceBuffer : strSpaceBuffer = "     "			'Adds Space before the Results File Headers.
+	Dim strTitle, newHeadFoot
+	Dim objFile
+	
+	If strAddtlText <> "" Then strAddtlText = " - " & strAddtlText						'Add strAddtlText to end of Server header line. Usually "Start" or "End"
+
+	strTitle = strSpaceBuffer & strServerName & strAddtlText							'The Title line in the header.
+	newHeadFoot=strHeaderLine & vbCrLf & strTitle & vbCrLf & strHeaderLine & vbCrLf		'The Full Header.
+
+	If NOT objFSO.FileExists(TempFile) then				'If file does not exist, create it.
+		'MsgBox "Creating Temp File: " & TempFile
+		Set objFile = objFSO.CreateTextFile(TempFile)
+		If boo64BitWarning Then								'Add 'Warning' at the top of the log file if it applies.
+			objFile.WriteLine "Warning: 64-Bit OS running in 32-Bit Mode."
+			objFile.WriteLine "This script may not work unless it's run with the batch file that runs HTA in 64-bit."
+			objFile.WriteLine "If the following results are blank please start this program by running:"
+			objFile.WriteLine strSpaceBuffer & "<" & batFileName & ">" & vbCrLf
+		End If
+		objFile.WriteLine strSpaceBuffer & Date() & " " & Time()
+		objFile.Close
+	End If
+
+	'MsgBox "Set objFile = objFSO.OpenTextFile(" & TempFile & ", "&ForAppending&", "&False
+	Set objFile = objFSO.OpenTextFile(TempFile, ForAppending, False)
+	'MsgBox "New Header: " & vbCrLf & newHeadFoot
+	objFile.Write newHeadFoot
+	objFile.Close
+	'MsgBox "Header Done."
+End Sub
+
+'Can't get this code working. <GetObject("WinNT://> Get's max memory overflow.
+Sub SeachForInUseInternal(strServerName,strSearch)
+'https://www.experts-exchange.com/questions/27949179/VB-Program-to-see-who-has-a-file-opened.html
+	Dim strResults
+	Dim killCount : killCount = 0		'Test for early termination.
+	Dim objConnection, colResources
+'	Set objConnection = GetObject("WinNT://" & strServerName & "/lanmanserver,fileservice")
+msgbox "Before GetObject(WinNT://"
+'	Set objConnection = GetObject("WinNT://" & strServerName & "/lanmanserver,fileservice")
+'	Set objConnection = GetObject("WinNT://127.0.0.1/LanmanServer")
+	Set objConnection = GetObject("WinNT://localhost/LanmanServer,fileservice")					'<----Crashes here every time!
+msgbox "After GetObject(WinNT://"
+'	Set colResources = objConnection.Resources
+
+	document.getElementById("SearchNow").value="Searching:" & vbCrLf & strServerName
+	HeaderFooter strServerName,"Start"
+
+'	Wscript.Echo "ID: " & objResource.Name
+'	Wscript.Echo "Path: " & objResource.Path
+'	Wscript.Echo "User: " & objResource.User
+'	Wscript.Echo "Locks: " & objResource.LockCount
+	
+'	For Each objResource in colResources
+	For Each objResource in objConnection.Resources
+		killCount = killCount + 1
+MsgBox "User:" & objResource.User & ",Path:" & objResource.Path & ",Name:" & objResource.Name
+		If killCount > 10 Then Exit Sub
+		If InStr(objResource.Path,strSearch) Then
+MsgBox "User:" & objResource.User & ",Path:" & objResource.Path & ",Name:" & objResource.Name
+			strResults = strResults & "User:" & objResource.User & ",Path:" & objResource.Path & ",Name:" & objResource.Name & vbCrLf
+		End If
+	Next
+	If NOT strResults = "" then
+		MsgBox strResults
+		Set objFile = objFSO.OpenTextFile(TempFile, ForAppending, False)
+		'MsgBox "New Header: " & vbCrLf & newHeadFoot
+		objFile.Write strResults
+		objFile.Close
+	End If
+
+	HeaderFooter strServerName,"End"
+
+End Sub
+
+'Runs the "OpenFiles.exe" command to get In-Use results from the server.
+Sub SeachForInUse(strServerName)
+	Dim intReturn
+	'Create the command line.
+	Dim strCmdLine : strCmdLine = shCmd1 & strServerName & shCmd2
+
+	'Set [Search Now] button text to [Searching...<Server Name>]
+	document.getElementById("SearchNow").value="Searching:" & vbCrLf & strServerName
+	HeaderFooter strServerName,"Start"
+	'MsgBox "Command Line: " & strCmdLine & ", 7=DontShowWindow, True=WaitUntilFinished"
+	'cmd /c openfiles /query /S %SearchServer% /FO csv | find /I "%SearchTerm%" >>"%temp%\InUseSearch-Temp.csv"
+	objShell.Run strCmdLine, 7, True
+'	intReturn = objShell.Run(strCmdLine, 7, True)
+'	If intReturn <> 0 Then 
+'	End If
+	'ADD SORT HERE
+	BubbleSort1
+	HeaderFooter strServerName,"End"
+End Sub
+
+'This Sub is run when the Search is pressed/started.
+Sub OnClickButtonSearchNow()
+	Dim SearchCount
+	Dim objUserEnv
+	Dim strUserTemp
+	Dim ans
+	Dim objPassword
+	
+	foundAnything = False			'Reset boolean at the beginning of each search.
+	
+	'Needed for Temp file location.
+	Set objUserEnv=objShell.Environment("User")
+	strUserTemp= objShell.ExpandEnvironmentStrings(objUserEnv("TEMP"))
+	TempFile = strUserTemp & "\InUseSearch.txt"				'The Temp File Name to save final results to.
+	TempFile2 = strUserTemp & "\InUseSearch-Temp.txt"		'The Temp File Name to save individual results to, for sorting.
+	
+	Dim SearchTerm : SearchTerm = document.getElementById("searchTextBox1").value		'Gets the text in the 'Search For:' box.
+	If SearchTerm = "" Then								'Stop program if 'Search for:' text box is empty.
+		MsgBox "The [Search for:] Box is Empty."
+		Exit Sub
+	Else
+		SearchTerm = Replace(SearchTerm, Chr(34), "")			'Remove quotes from search.
+		SearchTerm = Replace(SearchTerm, "*", "")				'Remove stars from search. Not supported by 'Find' command.
+	End If
+
+	'If UserName is defined in the INI file, get the password from the Password Box.
+	If NOT AccountUserName = "" Then
+		If NOT document.getElementById("userPasswordBox").value = "" Then
+			AccountPassword = document.getElementById("userPasswordBox").value
+			shCmdUP = " /u " & AccountUserName & " /p " & AccountPassword
+		Else
+			MsgBox	"Username '" & AccountUserName & "' is defined in the INI file, but the password is not set in the text box." & vbCrLf &_
+					"Please set the user password before starting the search."
+			Exit Sub
+		End If
+	End If
+
+	'cmd /c openfiles /query /S %SearchServer% /FO csv | find /I "%SearchTerm%" >>"%temp%\InUseSearch.csv"
+'	objShell.run shCmd1 & "Server" & shCmd2
+	'Create the command line string. Server name will be added to the center of shCmd1 & shCmd2.
+	shCmd1 = "cmd.exe /c openfiles.exe /query /S "
+	'shCmd2 = " /FO csv | find /I """ & SearchTerm & """ >>""" & TempFile & """"			'Append to Main Temp File
+	shCmd2 = " /FO csv " & shCmdUP & " | find /I """ & SearchTerm & """ >""" & TempFile2 & """"				'Creates blank Temp File, to be sorted and added to main TempFile.
+
+	'If temp file exists, delete it.
+	If objFSO.FileExists(TempFile) then
+		'MsgBox TempFile & " exists, deleting..."
+		objFSO.DeleteFile TempFile
+	End If
+
+	'Set [Search Now] button text to [Searching...]
+	document.getElementById("SearchNow").value="Searching..."
+
+'Check status of all check mark boxes. If checked, run the in-use search command on that server.
+	Dim anyChecked : anyChecked = False
+	Dim co1, rw
+	For co1 = 1 to totalColumns
+		SearchCount = 0
+		For rw = 1 to totalRows
+			Dim rwID : rwID = "Box"&columnName(co1)&rw
+			Dim txID : txID = Replace(rwID, "Box", "Txt")
+			If NOT document.getElementById(rwID) Is Nothing Then				'Check is the 'Box' exists.
+				If document.getElementById(rwID).checked Then					'Is the box checked?
+					If NOT document.getElementById(txID).value = "" Then		'Ensure text box contents are not blank. Shouldn't be due to INI processing. 
+						If NOT anyChecked Then anyChecked = True				'If anyChecked is False, then change to True. This only happens once.
+						SeachForInUse document.getElementById(txID).value		'Run search command on this server.
+'						SeachForInUseInternal document.getElementById(txID).value, SearchTerm			'Replacement for 'OpenFile.exe'. Haven't gotten this to work yet.
+					End If
+				End If
+			End If
+		Next
+	Next
+
+
+	'Set [Search Now] button text to 'Done', until LogWindow is closed.
+	document.getElementById("SearchNow").value="Done"
+
+
+	'If nothing is checked, then show a notice. Otherwise, process the output file and display it.
+	If anyChecked Then
+		RemoveCSVColumnOne()
+		'FindReplace/remove text defined in [Remove] section of INI.
+		If arrRemoveText(0) = 1 Then FindReplace arrRemoveText, ""
+		'If no results were found in any servers, add the 'strNoResultsMessage' to the end of the final output log.
+'MsgBox "foundAnything:" & foundAnything
+		If NOT foundAnything Then
+				Dim strNoResultsMessage			'Message placed at the end of the output log, if no results are found.
+				strNoResultsMessage =	vbCrLf &_
+										"No results found on any servers for: " & SearchTerm & vbCrLf &_
+										"Possible Reasons:" & vbCrLf &_
+										"   No open files matching the search pattern." & vbCrLf &_
+				  						"   The current user account does not have access rights to get OpenFiles results." & vbCrLf &_
+				  						"   The date/time might be off between the systems." & vbCrLf
+				If NOT AccountUserName = "" Then			'Only display this part of the message if a Username is entered from the INI.
+					strNoResultsMessage = strNoResultsMessage &_
+										"   The password might be incorrect. Re-enter the password in the 'Password:' box and try again." & vbCrLf
+				End If
+			Dim objFile : Set objFile = objFSO.OpenTextFile(TempFile, ForAppending, False)
+			objFile.Write strNoResultsMessage
+			objFile.Close
+		End If
+		'objShell.Run "notepad.exe " & TempFile
+		If objFSO.FileExists(TempFile) then
+			If NOT objFSO.FileExists(logViewerFile) then			'If the LogViewLife does not exist, ask to create it.
+				ans = MsgBox("LogFileViewer file not found: " & logViewerFile & vbCrLf & "Would you like to create one?",3,"LogFileViewer File not found.")
+				If ans = vbYes Then CreateLogViewer()
+			End If
+			
+			'If the LogViewLife exist, display the TempFile output.
+			If objFSO.FileExists(logViewerFile) then
+				objShell.Run """" & logViewerFile & """ """ & TempFile & """", 1, True
+			Else
+				MsgBox "'" & logViewerFile & "' is missing from the current folder."
+			End If
+		Else
+			MsgBox "Temp File Missing: " & TempFile			'Show message if the TempFile final output file is missing.
+		End If
+		'MsgBox "All Done"
+	Else
+		MsgBox "No Servers Are Selected"					'Show message if no servers are check-marked.
+	End If
+
+	'Set [Search Now] button text back to normal.
+	document.getElementById("SearchNow").value="Search Now"
+
+
+	'If temp file exists, delete it. (File Cleanup)
+	If objFSO.FileExists(TempFile) then objFSO.DeleteFile TempFile
+	If objFSO.FileExists(TempFile2) then objFSO.DeleteFile TempFile2
+
+End Sub
+
+'https://gist.github.com/simply-coded/019a8b299f9d0bfb2625496c80de78f1
+'https://gist.github.com/codeartery/0ea3a74e92d39ce520cffb05a8b99446
+Function ShowWindow( name, title )
+	REM@description
+	'An AppActivate alternative that shows and activates a window using its process name, window title, or both.
+	REM@author
+	' Jeremy England, https://codeartery.com/
+	REM@params
+	' name <string> The process name running the window. Use a comma delimited string to add more processes if you're unsure what process will be used. Leave blank "" if you don't know the process.
+	' title <regex> A regular expression string, to match the correct window title. Use "." if you don't know the title.
+	REM@returns
+	' ShowWindow <bool> Returns false if it doesn't find the window; true if it does.
+	REM@mini
+	' Sub ShowWindow(n,t):With CreateObject("WScript.Shell"):.Run "PowerShell -Ex Bypass -Com ""Add-Type -M '[DllImport(\""user32.dll\"")]
+	'		 public static extern bool ShowWindow(IntPtr h,int c);[DllImport(\""user32.dll\"")] public static extern int SetForegroundWindow(IntPtr h);
+	'		 -Name ps -Names w;$d=(gps "&n&").Where({$_.MainWindowTitle -Match '"&t&"'},1).MainWindowHandle;[w.ps]::ShowWindow($d,4);[w.ps]::SetForegroundWindow($d)""",0,-1:End With:End Sub
+	With CreateObject( "WScript.Shell")
+		ShowWindow = .Run( "PowerShell -ExecutionPolicy Bypass -Command ""Add-Type -MemberDefinition '" & _
+		"[DllImport(\""user32.dll\"")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);" & _
+		"[DllImport(\""user32.dll\"")] public static extern int SetForegroundWindow(IntPtr hwnd);' -Name PS -Namespace WindowsAPI;" & _
+		"$hWnd = (Get-Process " & name & ").Where({ $_.MainWindowTitle -Match '" & title & "' }, 1).MainWindowHandle;" & _
+		"[WindowsAPI.PS]::ShowWindow( $hWnd, 4 );[WindowsAPI.PS]::SetForegroundWindow( $hWnd );""", 0, True ) = 0
+	End With
+End Function
+
+'http://www.interclasse.com/scripts/htanotepad.php
+'Copied File | Edit | About Menu control system and intergrated into SOFIUS.
+'Thank you Jean-Luc Antoine.
+'''''''''''''''''''
+' Menu management '
+'''''''''''''''''''
+Sub ShowSubMenu(Parent,Child)
+	If Child.style.display="block" Then
+		Parent.classname="Menuover"
+		Child.style.display="none"
+		Set LastChildMenu=Nothing
+	Else
+		Parent.classname="Menuin"
+		Child.style.display="block"
+		Set LastChildMenu=Child
+	End If
+	Set LastMenu=Parent
+End Sub
+Sub MenuOver(Parent,Child)
+	If LastChildMenu is Nothing Then
+		Parent.className="MenuOver"
+	Else
+		If LastMenu is Parent Then
+			Parent.className="MenuIn"
+		Else
+			HideMenu
+			ShowSubMenu Parent,Child
+		End If
+	End If
+End Sub
+Sub MenuOut(Menu)
+	If LastChildMenu is Nothing Then Menu.className="MenuOut"
+End Sub
+Sub HideMenu
+	If Not LastChildMenu is Nothing Then
+		LastChildMenu.style.display="none"
+		Set LastChildMenu=Nothing
+		LAstMenu.classname="Menuout"
+	End If
+End Sub
+Sub SubMenuOver(Menu)
+	Menu.className="SubMenuOver"
+	'LastMenu.classname="Menuin"
+End Sub
+Sub SubMenuOut(Menu)
+	Menu.className="SubMenuOut"
+End Sub
+
+'''''''''''''''''''''''''''
+' Menu Options management '
+'''''''''''''''''''''''''''
+Sub ModifyINI()
+	Dim strINIOpenCmd : strINIOpenCmd = "Notepad.exe " & INIFile
+	'If Ini file does not exist, offer to create it.
+	If objFSO.FileExists(INIFile) then
+		
+		'When opening the INI file for editing, show this message once per program session.
+		If Not booModifyIniBoxShown Then
+			MsgBox	"(" & INIFile & ") will be opened in notepad. If you modify the file, save it and use (File -> ReRead INI) to load the changes into the current program." & vbCrLf &_
+					"Alternatively, you may close and reopen the " & ProgramShortName & " program." & vbCrLf & vbCrLf &_
+					"Use (File -> INI Setup) to see how the (" & INIFileShortName & ") file should be formated." & vbCrLf & vbCrLf &_
+					"This info box will only show one time per program session.",0,"Modify " & ProgramShortName & " " & INIFile
+			booModifyIniBoxShown = True
+		End If
+
+		'Detect if Notepad is already running, and if so, activate that window.
+'		If objShell.AppActivate(INIFileShortName & " - Notepad") Then
+		If ShowWindow("notepad", INIFileShortName) Then
+			'If above line is true, then it should activate and auto-focus the already open INI file.
+'			objShell.AppActivate(INIFile & " - Notepad")		'Don't need.
+'			objShell.AppActivate(notepadINI.ProcessID)		'Don't need.
+		Else
+'			Set notepadINI = objShell.Run strINIOpenCmd, 1, False			'Don't need. Old command.
+'			Set notepadINI = objShell.Exec(strINIOpenCmd)
+			objShell.Exec(strINIOpenCmd)
+		End If
+		
+	Else
+		CreateINI()
+	End If
+End Sub
+
+Sub ReReadINI()
+	Dim objOption
+
+	'Remove all Rows in the Table.
+	Do While ServerTable.rows.length > 0
+		ServerTable.deleteRow(0)
+	Loop
+
+	'Reset total rows and columns to 0.
+	totalRows = 0
+	totalColumns = 0
+	addlRows = 0
+	
+	'Remove all 'Favorite/Searches' Options.
+	For Each objOption in DropFavSearch.Options
+		If Not objOption.value = "" Then
+'			searchTextBox1.value = objOption.InnerText
+			DropFavSearch.Remove(1)
+		End If
+	Next
+
+	'Reset 'arrRemoveText' variable, which contains text to remove from the final output file.
+	ReDim arrRemoveText(MAXRemoveTextCount+1)
+	arrRemoveText(0) = "0"
+
+	ReadINIFile()
+End Sub
+
+Sub FeaturesBox()
+'	MsgBox "Not Implimented Yet.",0,"Features"
+	MsgBox	"[TAB] to cycle through options and checkboxes." & vbCrLf &_
+			"[SpaceBar] to select check boxes or activate the selected button." & vbCrLf &_
+			"[Enter] at any time to begin the server search." & vbCrLf &_
+			"[ESC] at any time will exit the program." & vbCrLf & vbCrLf &_
+			"Keyboard Shortcuts: ^=Ctrl OR Alt" & vbCrLf &_
+			"[F3] to select the Search for: Text Box" & vbCrLf &_
+			"[F4] to select the Favorites: Drop-Down Box" & vbCrLf &_
+			"^S : Start the Search." & vbCrLf &_
+			"^E : Edit the " & INIFile & " file in Notepad."& vbCrLf &_
+			"^R : Reread the " & INIFile & " file into the program." & vbCrLf &_
+			"^F : Select the Favorite: drop-down box." & vbCrLf &_
+			"Alt+C : Check All Server Boxes" & vbCrLf &_
+			"^M : Check All Server Boxes" & vbCrLf &_
+			"^U : Uncheck All Server Boxes" & vbCrLf &_
+			"",0,ProgramShortName & " Features"
+			
+End Sub
+
+Sub SetupINI()
+	MsgBox	"[Settings] Group used to modify settings of the program." & vbCrLf &_
+			"	SortByPath, SortByName, AccountUserName," & vbCrLf &_
+			"	RemoveColumns, etc." & vbCrLf &_
+			"[Searches] Group used for favorite/common search terms" & vbCrLf &_
+			"	in the ""Favorite:"" dropdown box." & vbCrLf &_
+			"[Remove] Group used to remove common/unnessesary text" & vbCrLf &_
+			"	from the final results file." & vbCrLf &_
+			"[??????] Any other group name will be the title for a" & vbCrLf &_
+			"	column of servers. e.g. [Windows][NAS],etc.",0,ProgramShortName & " " & INIFile & " Setup"
+End Sub
+
+Sub CurrentSettings()
+	MsgBox	"Current Program Settings:" & vbCrLf &_
+			"    SortByPath      = " & SortByPath & vbCrLf &_
+			"    SortByName      = " & SortByName & vbCrLf &_
+			"    Username        = " & AccountUserName & vbCrLf &_
+			"    RemoveColumn(s) = " & vbCrLf &_
+			"    " & vbCrLf &_
+			"    Program Path: " & vbCrLf & "    " & strFolderPath & vbCrLf &_
+			"    " & vbCrLf &_
+			"Make Setting Changes in the " & INIFile & " file. (Edit -> Edit INI)",0,ProgramShortName & " Settings"
+End Sub
+
+Sub WebSite()
+	'objShell.Run "cmd /c start """" " & ProgramWebSite2, 7, False
+	objShell.Run ProgramWebSite2
+End Sub
+
+Sub AboutBox()
+	MsgBox	SearchTool.ApplicationName & " (" & ProgramShortName & ")" & vbCrLf &_
+			"	v" & SearchTool.Version & vbCrLf &_
+			"Code Compiled by: " & ProgramAuthor & vbCrLf &_
+			ProgramCompany & " - " & ProgramWebSite & vbCrLf &_
+			ProgramInfo1 & vbCrLf &_
+			ProgramInfo2,0,"About " & ProgramShortName
+End Sub
+
+'''''''''''''''''''''''''
+' Program Close Options '
+'''''''''''''''''''''''''
+Sub Document_OnKeyUp()
+	'https://developer.mozilla.org/en-US/docs/Web/API/KeyboardEvent/keyCode
+	'Press Quick Keys.
+	Dim intKeyCode, ctrlKeyCode, altKeyCode
+	intKeyCode = Window.Event.Keycode
+	ctrlKeyCode = Window.Event.ctrlKey
+	altKeyCode = Window.Event.altKey
+	If (ctrlKeyCode AND intKeyCode = 83) Then OnClickButtonSearchNow()				'Ctrl+S = Search	(Alt covered by accesskey)
+	If ((ctrlKeyCode OR altKeyCode) AND intKeyCode = 69) Then ModifyINI()			'Ctrl+E = Edit INI
+	If ((ctrlKeyCode OR altKeyCode) AND intKeyCode = 82) Then ReReadINI()			'Ctrl+R = ReRead INI
+	If (ctrlKeyCode AND intKeyCode = 70) Then DropFavSearch.focus					'Ctrl+F = Select Favorites DropDown Box	(Alt covered by accesskey)
+'	If (ctrlKeyCode AND intKeyCode = 67) Then CheckEverything(True)					'Ctrl+C = CheckEverything	(Alt covered by accesskey)
+	If ((ctrlKeyCode OR altKeyCode) AND intKeyCode = 77) Then CheckEverything(True)	'Alt+M = Check(M)arkEverything
+	If (ctrlKeyCode AND intKeyCode = 85) Then CheckEverything(False)				'Ctrl+U = UnCheckEverything	(Alt covered by accesskey)
+'	If intKeyCode = 112 Then AboutBox()												'F1 = About Box
+	If intKeyCode = 112 Then FeaturesBox()											'F1 = Features Box (Was F2)
+	'https://devblogs.microsoft.com/scripting/hey-scripting-guy-how-can-i-automatically-move-the-focus-as-users-type-in-an-hta/
+	If intKeyCode = 114 Then searchTextBox1.focus : searchTextBox1.select			'F3 = Set curser to Search Box and select all.
+	If intKeyCode = 115 Then DropFavSearch.focus									'F4 = Select Favorites DropDown Box
+	If intKeyCode = 116 Then ReReadINI()											'F5 = ReRead INI
+	If intKeyCode = 27 Then ExitTool()												'[ESC]
+End Sub
+
+Sub ExitTool()
+	window.close()
+	booQuitApp = True
+End Sub
+</script>
+
+<body scroll="no" bgcolor="Blue" leftmargin=0 topmargin=0 rightmargin=0>
+
+<style type="text/css">
+.MainMenu {xfont-family: "Verdana, Arial, Helvetica, sans-serif";
+		font:menu;
+		background-color:Menu;
+		color:MenuText;
+		xfont-size: 8pt;
+		cursor:default; //auto, text, pointer
+	}
+.MainMenu TABLE {xfont-family:"Arial";
+		xfont-size:8pt;
+		font:menu;
+		padding:0pt;
+		border:0pt;
+		FILTER: progid:DXImageTransform.Microsoft.Alpha(style=0,opacity=90);
+	}
+.MainMenu TD {border:"1px solid Menu";}
+.submenu {position:absolute;top=20; background-color:Menu; border="2px outset";}
+.MenuIn {border:'1px inset';}
+.Menuover {border:'1px outset';}
+.Menuout {border:'1px solid';}
+.Submenuover {background-color:highlight;color:highlighttext;}
+.Submenuout {background-color:Menu;color:MenuText;}
+
+.tg  {border-collapse:collapse;border-spacing:0;}
+.tg th{font-family:Arial, sans-serif; font-size:14px; font-weight:normal; padding-top:0px ;padding-right:20px; padding-bottom:0px; padding-left:0px ;border-style:solid; border-width:0px; overflow:hidden; word-break:normal; position: sticky;position:-webkit-sticky;}
+.tg td{font-family:Arial, sans-serif; font-size:14px; padding-top:5px ;padding-right:10px; padding-bottom:0px; padding-left:0px ;border-style:solid; border-width:0px; overflow:hidden; word-break:normal;}
+.tg .tg-header{color:#FFFB00; font-size:22px; font-weight:bold; font-family:Verdana, Geneva, sans-serif !important;}
+.tg .tg-text{color:white; font-family:Verdana, Geneva, sans-serif !important; vertical-align:top}
+.button {height:50px; width:136px; font-weight:bold; background-color:#555555; border: 2px solid #FFFB00; color:white; text-align:center; text-decoration:none; display:inline-block; font-size:16px;}
+</style>
+
+<!-- http://www.interclasse.com/scripts/htanotepad.php -->
+<!-- ©2002 Jean-Luc Antoine. All Rights Reserved. ... Permission granted to use and modify any of the scripts found on InterClasse.com -->
+<TABLE id=MenuTable class=MainMenu><TR>
+	<TD	onclick='ShowSubMenu Me,MyFileMenu'
+		onmouseover='MenuOver Me,MyFileMenu'
+		onmouseout='MenuOut Me'> File </TD>
+	<TD	onclick='ShowSubMenu Me,MyEditMenu'
+		onmouseover='MenuOver Me,MyEditMenu'
+		onmouseout='MenuOut Me'> Edit </TD>
+	<TD	onclick='ShowSubMenu Me,MyHelpMenu'
+		onmouseover='MenuOver Me,MyHelpMenu'
+		onmouseout='MenuOut Me'> Help </TD>
+	<TD onclick="HideMenu" width=100% border=2></TD>
+	</TR></TABLE>
+<TABLE ID=MyFileMenu class=submenu style="left=2;display:none;">
+	<TR><TD	onclick="HideMenu:ReReadINI"
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'> <u>R</u>eRead INI</TD></TR>
+	<TR><TD><HR></TD></TR>
+	<TR><TD	onclick="HideMenu:OnClickButtonSearchNow"
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'> <u>S</u>tart Search</TD></TR>
+	<TR><TD><HR></TD></TR>
+	<TR><TD	onclick="HideMenu:window.close"
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'> Quit</TD></TR>
+	</TABLE>
+<TABLE ID=MyEditMenu class=submenu style="left=30;display:none;"><TR>
+	<TR><TD	onclick="HideMenu:ModifyINI"
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'> <u>E</u>dit INI</TD></TR>
+<!--	<TD><HR width=50px></TD></TR>  -->
+	</TABLE>
+<TABLE ID=MyHelpMenu class=submenu style="left=60;display:none;"><TR>
+	<TD	onclick='HideMenu:FeaturesBox'
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'>Features</TD></TR>
+	<TR><TD	onclick='HideMenu:SetupINI'
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'>INI Setup</TD></TR>
+	<TR><TD	onclick='HideMenu:CurrentSettings'
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'>Current Settings</TD></TR>
+	<TR><TD	onclick='HideMenu:WebSite'
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'>Web Site</TD></TR>
+	<TR><TD	onclick='HideMenu:AboutBox'
+		onmouseover='Submenuover Me'
+		onmouseout='Submenuout Me'>About</TD></TR>
+	</TABLE>
+
+<br style="line-height:6px;" />
+
+	<font color="White">&nbsp;Search for:&nbsp;</font><input type="text" name="searchTextBox1" id="searchTextBox1" size="27" autofocus="autofocus" value="" tabIndex="1">
+	<label style="display: inline;">&nbsp;<button name="CheckEverything" onClick='CheckEverything(True)' style="display: none;" tabIndex="3" accesskey="C"><u>C</u>heck Everything</button></label>
+	<br>
+	<label id="SearchBox" style="display: none;"><font color="White">&nbsp;<u>F</u>avorite:&nbsp;&nbsp;&nbsp;&nbsp;</font><select id="DropFavSearch" name="DropFavSearch" size="1" style="width: 190px;" onchange="UpdateSearchBox()" tabIndex="2" accesskey="F">
+		<option id="Fav0"></option>
+<!--		<option id="Fav1"></option>
+		<option id="Fav2"></option>		-->
+	</select>
+	&nbsp;<button name="UnCheckEverything" onClick='CheckEverything(False)' style="display: none;" tabIndex="4" accesskey="U"><u>U</u>ncheck Everything</button></label>
+
+<!-- https://stackoverflow.com/questions/8423768/freeze-the-top-row-for-an-html-table-only-fixed-table-header-scrolling -->
+<table id="ServerTable" class="tg">
+<br style="line-height:6px;" />
+<!-- Original Static Code.
+  <tr id="Headers">
+  </tr>
+	<th class="tg-header" id="Header1" style="display: none;"></th>
+	<th class="tg-header" id="Header2" style="display: none;"></th>
+	<th class="tg-header" id="Header3" style="display: none;"></th>
+  </tr>
+<!-- Sample: Six Blank Columns: <tr id="row#" style="display: none;"><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr> -->
+<!--  <tr id="row1" style="display: none;"><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+  <tr id="row2" style="display: none;"><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+  <tr id="rowCheckAll">
+	<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="CheckAllA" value="Check All" onClick='checkAll("A")' style="visibility: hidden;"></td>
+	<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="CheckAllB" value="Check All" onClick='checkAll("B")' style="visibility: hidden;"></td>
+  </tr>
+  <tr id="rowUnCheckAll">
+	<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="UnCheckAllA" value="Uncheck All" onClick='uncheckAll("A")' style="visibility: hidden;"></td>
+	<td class="tg-text">&nbsp;&nbsp;&nbsp;&nbsp;<input type="button" name="UnCheckAllB" value="Uncheck All" onClick='uncheckAll("B")' style="visibility: hidden;"></td>
+  </tr>	-->
+</table>
+
+<br>
+&nbsp;&nbsp;<input type="submit" class="button" name="SearchNow" id="SearchNow" value="Search Now" onclick="OnClickButtonSearchNow" accesskey="S">
+&nbsp;&nbsp;<input type="button" class="button" name="Exit" id="Exit" value="Exit" onclick="ExitTool">
+</br>
+<label id="PasswordLine" style="display: none;"><br style="line-height:6px;" />&nbsp;&nbsp;<font color="White">Password:&nbsp;&nbsp;&nbsp;</font><input type="password" name="userPasswordBox" id="userPasswordBox" size="30"></label>
+
+
+</body>
+</html>
