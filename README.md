@@ -7,4 +7,5 @@ SOFIUS works with as little as a few servers in one group, to as many as a thous
 The user running this program must have the proper permissions to retrieve the 'OpenFiles.exe' information for the respective servers.
 This can be tested by opening a Windows Command Prompt and typing the following:
 *  openfiles /query /s [SERVERNAME] /fo csv
+
 If you receive results, then this program should work for you.
