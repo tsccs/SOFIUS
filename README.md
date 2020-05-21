@@ -6,7 +6,6 @@ SOFIUS works with as little as a few servers in one group, to as many as a thous
 
 The user running this program must have the proper permissions to retrieve the 'OpenFiles.exe' information for the respective servers.
 This can be tested by opening a Windows Command Prompt and typing the following:
-  openfiles /query /s [SERVERNAME] /fo csv
-  If you receive results, then this program should work for you.
+*  openfiles /query /s [SERVERNAME] /fo csv
 
-You only need the main HTA file. If you are on a 64-bit OS, the HTA will create a batch file which will run the HTA in the proper 64-bit environment. The INI file will be created, and open for configuration.
+If you receive results, then this program should work for you.
