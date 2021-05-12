@@ -1,44 +1,69 @@
-'History Log
-'0.1 = Basic static code.
-'0.2 = Start Conversion to Dynamic
-'0.21 = Redo IDs and Names
-'0.22 = CheckAll Consolidation and Dynamic
-'0.23 = Convert all "If checkmarked checks" to a single for loop.
-'0.24 = Old Code Cleanup. Impliment Server list import Code.
-'0.25 = Convert CheckMark code to dynamic, passed in by INI file read.
-'0.26 = Old Code Cleanup - Code Functional. Allow enable window scroll if too big.
-'0.27 = Make entire window dynamically larger.
-'		https://stackoverflow.com/questions/33752695/dynamically-updating-a-table-row-in-hta-vbs
-'0.28 = Adjust code to allow as many servers as you want.
-'0.29 = x64 check. Bat File Create. Fix Window Sizing and Top Box Spacing when using small data set.
-'0.30 = New Name=Server Open File In-Use Search (SOFIUS). App icon created with xiconeditor.com
-'0.30 = New INI section, [Remove]. Common text to remove from results. Build public Array. Change FindReplace() to [for each] loop.
-'0.30 = Added File Menu at the top. Need to try and fix allignment.
-'0.31 = Fix Favorites, if blank, don't show. If group is blank, don't show. Impliment EditINI and ReReadINI.
-'		Add TabIndex to align [Tab] use to each column of servers. Add lots program comments. Added Keyboard shortcut keys.
-'0.32 = Add more comments. Added Ctrl and Alt Keyboard Shortcut Keys.
-'		Added SkipGroup Function to INI proccessor. [-GroupName].
-'		Better Group Header Name Proccessing. Allow # comments in-line in INI file.
-'		Add option to sort output data. Will need to sort each section and combine into final output file.
-'			Sort by path will require Split() to sort by second column. Code will always sort by path.
-'		Add INI options to sort by name. [Settings] SortByName=0/1
-'0.33 = Add AccountUsername to INI. If username exists, show password input box below [Search] button, and increase windows size by one.
-'0.33 = Program now working when run from a UNC path. It will localize to the current folder, no matter where, and create/load the INI and LogFileViewer from there.
-'0.33 = Added (Function ShowWindow) from https://gist.github.com/codeartery/0ea3a74e92d39ce520cffb05a8b99446
-'		Better detecting and activating of 'Servers.ini" file, even if in a minimized state, verses .AppActivate.
-'0.34 = Changed HTA Setting in 'Log File Viewer' to allow text selection and copy functionality.
-'0.34 = Fix bug where Re-Read INI adds one line of size to the program window size. Re-Read-INI Sub, Reset addlRows = 0.
+History Log
+0.1 = Basic static code.
+0.2 = Start Conversion to Dynamic
+0.21 = Redo IDs and Names
+0.22 = CheckAll Consolidation and Dynamic
+0.23 = Convert all "If checkmarked checks" to a single for loop.
+0.24 = Old Code Cleanup. Impliment Server list import Code.
+0.25 = Convert CheckMark code to dynamic, passed in by INI file read.
+0.26 = Old Code Cleanup - Code Functional. Allow enable window scroll if too big.
+0.27 = Make entire window dynamically larger.
+		https://stackoverflow.com/questions/33752695/dynamically-updating-a-table-row-in-hta-vbs
+0.28 = Adjust code to allow as many servers as you want.
+0.29 = x64 check. Bat File Create. Fix Window Sizing and Top Box Spacing when using small data set.
+0.30 = New Name=Server Open File In-Use Search (SOFIUS). App icon created with xiconeditor.com
+0.30 = New INI section, [Remove]. Common text to remove from results. Build public Array. Change FindReplace() to [for each] loop.
+0.30 = Added File Menu at the top. Need to try and fix allignment.
+0.31 = Fix Favorites, if blank, don't show. If group is blank, don't show. Impliment EditINI and ReReadINI.
+		Add TabIndex to align [Tab] use to each column of servers. Add lots program comments. Added Keyboard shortcut keys.
+0.32 = Add more comments. Added Ctrl and Alt Keyboard Shortcut Keys.
+		Added SkipGroup Function to INI proccessor. [-GroupName].
+		Better Group Header Name Proccessing. Allow # comments in-line in INI file.
+		Add option to sort output data. Will need to sort each section and combine into final output file.
+			Sort by path will require Split() to sort by second column. Code will always sort by path.
+		Add INI options to sort by name. [Settings] SortByName=0/1
+0.33 = Add AccountUsername to INI. If username exists, show password input box below [Search] button, and increase windows size by one.
+0.33 = Program now working when run from a UNC path. It will localize to the current folder, no matter where, and create/load the INI and LogFileViewer from there.
+0.33 = Added (Function ShowWindow) from https://gist.github.com/codeartery/0ea3a74e92d39ce520cffb05a8b99446
+		Better detecting and activating of 'Servers.ini" file, even if in a minimized state, verses .AppActivate.
+0.34 = Changed HTA Setting in 'Log File Viewer' to allow text selection and copy functionality.
+0.34 = Fix bug where Re-Read INI adds one line of size to the program window size. Re-Read-INI Sub, Reset addlRows = 0.
 
-'0.xx = Search for '.' on ReadyNAS can result in "INFO: No shared open files found." which causes "Subscript Out of Range" error. Need to fix. (Idea: Look for comma. If none found, skip that line.)
-'0.xx = Need to Close Popup Menus (File, Edit, Help...) when clicking somewhere else in the app.
 
-'0.xx = TODO, Add INI options for 'RemoveColumns'
-'		'RemoveColumns', might need to be in each group, depending on the results from OpenFiles on a particular server.
-'				Will likely need to program into current BubbleSort. May also need it's own BubbleSort to sort removed multiple columns from high to low.
-'				Expected columns to remove, 1 and 3. Must remove 3 first, otherwise removing column 1 will make column 3 move to column 2.
-'				Maybe do an "if column exists in Array(RemoveColumns) then don't output to final results file."
-'0.xx = TODO, Add error catch each time the server search is run.
-'0.xx = TODO, Add timeout for when a server search is taking too long. (objShell.Run)
-'0.xx = TODO, Add INI option to keep the output results. Must always delete that file, if it exists, before a new [Search] run. Note: Others could use this to look for other in-use files. May not be necessary.
-'0.xx = TODO, Implement Error Handling, especially at file open levels (for access denied permission issues) and INI import issues.
-'0.xx = TODO, Test/Change OPENFILES to use VBS Internal Server File In-Use Lookup. Test Speed. Can't get it working yet. Memory Overflow.
+
+0.xx = Search for '.' on ReadyNAS can result in "INFO: No shared open files found." which causes "Subscript Out of Range" error. Need to fix. (Idea: Look for comma. If none found, skip that line.)
+0.xx = Need to Close Popup Menus (File, Edit, Help...) when clicking somewhere else in the app.
+
+0.xx = TODO, Add INI options for 'RemoveColumns'
+		'RemoveColumns', might need to be in each group, depending on the results from OpenFiles on a particular server.
+				Will likely need to program into current BubbleSort. May also need it's own BubbleSort to sort removed multiple columns from high to low.
+				Expected columns to remove, 1 and 3. Must remove 3 first, otherwise removing column 1 will make column 3 move to column 2.
+				Maybe do an "if column exists in Array(RemoveColumns) then don't output to final results file."
+0.xx = TODO, Add error catch each time the server search is run.
+0.xx = TODO, Add timeout for when a server search is taking too long. (objShell.Run)
+0.xx = TODO, Add INI option to keep the output results. Must always delete that file, if it exists, before a new [Search] run. Note: Others could use this to look for other in-use files. May not be necessary.
+0.xx = TODO, Implement Error Handling, especially at file open levels (for access denied permission issues) and INI import issues.
+0.xx = TODO, Test/Change OPENFILES to use VBS Internal Server File In-Use Lookup. Test Speed. Can't get it working yet. Memory Overflow.
+
+0.34a
+---------------------------
+Server Open File In-Use Search
+---------------------------
+Stop running this script?
+A script on this page is causing your web browser to run slowly.
+If it continues to run, your computer might become
+unresponsive.
+---------------------------
+Yes   No   
+---------------------------
+https://stackoverflow.com/questions/6598285/how-do-i-prevent-the-slow-script-warning-and-force-the-browser-to-continue-runni
+https://support.microsoft.com/en-us/help/175500/error-message-a-script-on-this-page-is-causing-internet-explorer-to-ru
+To change this time-out value in Internet Explorer versions 4.0 through 8, follow these steps:
+
+    Using a Registry Editor such as Regedt32.exe, open this key:
+    HKEY_CURRENT_USER\Software\Microsoft\Internet Explorer\Styles
+
+    Note If the Styles key is not present, create a new key that is called Styles.
+    Create a new DWORD value called "MaxScriptStatements" under this key, and set the value to the desired number of script statements. If you are not aure about which value you need to set this to, you can set it to a DWORD value of 0xFFFFFFFF to avoid the dialog box. 
+
+By default, the key does not exist. If the key has not been added, the default threshold limit for the time-out dialog box is 5,000,000 statements for Internet Explorer 4 and later versions.
