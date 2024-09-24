@@ -9,3 +9,7 @@ This can be tested by opening a Windows Command Prompt and typing the following:
 *  openfiles /query /s [SERVERNAME] /fo csv
 
 If you receive results, then this program should work for you.
+
+Example Screenshot
+
+![Example screenshot](https://github.com/tsccs/SOFIUS/blob/master/screenshot.png?raw=true)
