@@ -12,4 +12,4 @@ If you receive results, then this program should work for you.
 
 Example Screenshot
 
-![Example screenshot](https://github.com/tsccs/SOFIUS/blob/master/screenshot.png?raw=true)
+![Example screenshot](screenshot.png?raw=true)
